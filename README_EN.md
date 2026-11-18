@@ -6,138 +6,122 @@
 
 ## Overview
 
-**ScreenCoverLock** is a lightweight, local-first Windows desktop screen-cover lock utility built with .NET Framework (C# / WinForms).  
-It provides customizable full-screen lock wallpapers, idle screen dimming, per-character prefix error detection, optional local-only camera recording on intrusion attempts, and an owner-authorized automation pause interface guarded against physical input.
+**ScreenCoverLock** is a Windows full-screen desktop cover lock and intrusion-monitoring utility built for **"background tasks + public-space tamper protection + safe mobile/remote AI takeover"**:
+
+- **Protection in Public Places (Dormitory, Library, Lab, Office)**:
+  Keep background jobs (downloads, builds, training runs) alive with display/system wake locks while covering all monitors and blocking casual tampering.
+- **Mobile / Remote AI Handover (Codex & Computer-Use Agents)**:
+  When you trigger an AI agent from your phone to inspect the screen or operate your PC remotely, the agent can request a temporary pause through an owner-authorized local pipe, perform its task, and restore the cover afterward.
+- **Instant Physical-Touch Re-Lock + Optional Camera Capture**:
+  If anyone physically touches the keyboard or mouse while the cover is paused (or enters wrong characters while locked), **ScreenCoverLock** intercepts the input, snaps the full-screen lock back immediately, and optionally triggers local-only webcam recording.
 
 ---
 
-## Key Features
+## Shortcut Handling: Blocked vs. Unblocked
 
-- **Dual Lock Modes**
-  - **Strict Mode (`ScreenCover-Strict.exe`)**: Topmost full-screen cover that actively retains foreground focus and blocks `Win`, `Alt+F4`, and `Ctrl+Shift+Esc`.
-  - **Casual Mode (`ScreenCover-Casual.exe`)**: Lightweight full-screen cover without aggressive focus stealing.
-- **Multi-Monitor Support**
-  - Automatically tracks display configuration changes and spans synchronized cover windows across all connected monitors.
-- **Idle Screen Dimming**
-  - Transitions to a dimmed wallpaper after a configurable period without physical keyboard/mouse activity (default: `10s`).
-  - Remains dimmed on mouse movement or valid password prefixes; brightens and shows an alert only when an invalid character is typed.
-  - Does not alter Windows hardware/system display brightness.
-- **Fully Customizable UI Images (Copyright-Free Defaults)**
-  - Every built-in wallpaper, digit indicator, warning badge, and `.ico` application icon bundled in this repository is a clean, **programmatically generated geometric asset** with zero third-party copyrighted art.
-  - Users can replace UI images locally via the Settings UI without ever committing personal or copyrighted media to the repository.
+**Strict Mode** and **Casual Mode** apply different keyboard-filtering rules, and certain Windows kernel-level keys are intentionally or architecturally **not blocked**:
+
+| Shortcut / Key | Strict Mode (`ScreenCover-Strict`) | Casual Mode (`ScreenCover-Casual`) | Notes |
+| :--- | :--- | :--- | :--- |
+| **`Win` Keys** (`Win+D`, `Win+Tab`, `Win+E`, etc.) | **Blocked** | **Blocked** | Left/Right `Win` keys are intercepted via `WH_KEYBOARD_LL` |
+| **`Alt+F4`** | **Blocked** | **Blocked** | Suppressed in `ProcessCmdKey` to prevent closing the cover |
+| **`Ctrl+Shift+Esc`** (Task Manager) | **Blocked** | **Not Blocked** | Blocked in Strict mode; allowed in Casual mode |
+| **`Alt+Tab` / `Alt+Esc`** (Window Switch) | **Key not blocked; focus forcibly reclaimed** | **Not Blocked** | Strict mode keeps `TopMost` and reclaims foreground every `200ms`; Casual mode allows switching windows |
+| **`Ctrl+Alt+Del`** (Secure Attention Sequence) | **Never Blocked** | **Never Blocked** | Handled by Windows kernel/Winlogon; user-mode apps cannot and should not block it (retains OS recovery path) |
+| **`Win+L`** (Windows System Lock) | **Not Blocked** | **Not Blocked** | Handled by Windows logon subsystem; ScreenCoverLock does not replace Windows lock screen |
+| **`Ctrl+Shift+Q`** (Emergency Exit) | **Handled by App** | **Handled by App** | Registered hotkey; exits cover immediately without password (works during 30s cooldown) |
+| **`Ctrl+Shift+L`** (Manual Re-Lock) | **Handled by App** | **Handled by App** | Registered when `--allow-automation` is active; restores cover immediately |
+
+> **Important**: ScreenCoverLock is a **user-space desktop cover**, not a replacement for Windows Lock Screen (`Win+L`). Anyone who knows `Ctrl+Shift+Q` or uses `Ctrl+Alt+Del` to open Task Manager / Sign-out can still exit the app.
+
+---
+
+## Operating Guide (Workflow & Rules)
+
+### 1. Initial Setup (One-Time)
+
+1. Open Settings: run `.\out\ScreenCover-Strict.exe --settings`.
+2. Set a **6-character case-sensitive owner password** (stored encrypted via current-user Windows DPAPI; never stored in plaintext).
+3. *(Optional)* Customize your local wallpapers, digit icons, and input dock position in Settings.
+4. *(Optional)* Enable camera recording (disabled by default): click **Find** (`查找`), select a camera, run the **~3-second manual test**, verify the framing preview, check **Enable Recording**, and click **Save**.
+
+### 2. Launching Before Leaving Your PC
+
+- **Standard Lock (No AI takeover needed)**:
+  Launch `ScreenCover-Strict.exe` (recommended in public places) or `ScreenCover-Casual.exe` without `--allow-automation`.
+- **AI Remote Takeover Enabled**:
+  1. Launch with `--allow-automation` (e.g., `scripts\launch-strict.ps1`).
+  2. Confirm the interactive **"Enable Automation Temporary Pause"** prompt **in person** (`Yes`). Without clicking `Yes` on every launch, background scripts cannot pause the cover.
+
+### 3. Remote / Mobile AI Control Protocol
+
+Once authorized at startup, an AI agent controls the cover via `scripts\ScreenCover-Control.ps1`:
+
+1. **Check Status**: `.\scripts\ScreenCover-Control.ps1 -Action Status -Mode Strict`
+2. **Pause Cover**: `.\scripts\ScreenCover-Control.ps1 -Action Start -Mode Strict`
+   - Hides cover windows, starts a background `KeepAlive` lease renewer (10-minute lease intervals), and arms `InputGuard`.
+3. **Physical-Touch Protection During AI Operation**:
+   - Injected AI inputs pass through `InputGuard`.
+   - Any **non-injected physical keyboard/mouse input** is immediately swallowed and triggers an instant full-screen re-lock (`lastRestoreReason = "physical_input"`).
+   - **Rule**: Once `lastRestoreReason` is `physical_input`, the AI must **never** call `Start` again autonomously—leave the screen locked for the owner.
+4. **Restore Cover**: `.\scripts\ScreenCover-Control.ps1 -Action Resume -Mode Strict`
+
+### 4. Owner Unlock & Recovery
+
+- **Idle Dimming**: Transitions to the dark image after `10s` (configurable) of no physical input. Mouse movement and valid password prefixes keep the screen dimmed; only an **invalid character** brightens the screen and shows the warning banner.
+- **Password Entry**: Up to 6 characters, IME and paste disabled. Digits 1–5 and the 6th character show length-only icons. `Backspace` is not an error; `Escape` cancels the attempt; `Enter` unlocks; 5 wrong submissions trigger a `30s` cooldown.
+- **Mistype Self-Cleanup**: If you mistype a character, backspace to fix it, and unlock within the **same attempt**, any recording containing only that attempt is automatically cancelled and deleted.
+
+---
+
+## Architecture & Technical Principles
+
+1. **Display Covering & Wake Lock**: Uses `SetThreadExecutionState` to keep the system and display awake while locked without modifying Windows power plans, and `DisplayCovers` to span synchronized forms across all monitors.
+2. **DPAPI + HMAC Prefix Verification (`PasswordVault` & `LockState`)**: Stores the full verifier (`SHA-256`) and per-prefix `HMAC-SHA256` digests (keyed with a random 32-byte key) inside Windows DPAPI (`DataProtectionScope.CurrentUser`) files (`legacy-verifier.dat` / `prefix.dat`).
+3. **Injected vs. Physical Input Separation (`InputGuard` & `ActivityMonitor`)**: Inspects low-level hook flags (`LLMHF_INJECTED` / `0x03` for mouse, `LLKHF_INJECTED` / `0x12` for keyboard). Unflagged physical input during an automation pause is blocked (`return 1`) and queued to restore the cover.
+4. **Scoped Named Pipe & Lease Watchdog (`ControlPipe` & `SessionLease`)**: Pipe name is bound to the current user SID and Windows session ID (`ScreenCover.Control.v1.<SID>.<SessionId>.<mode>`), denying network access. If the keeper process stops renewing, the cover automatically re-locks when the lease expires.
+5. **Isolated Recording Worker (`ScreenCover.Recorder.exe`)**: Decoupled from UI/hook threads via `%LOCALAPPDATA%\ScreenCoverUpgrade\Queue`. Invokes `tools/ffmpeg.exe` (`dshow`, video-only H.264/Matroska `.mkv`, 1s cluster flushing) with automatic retention/size cleanup and zero cloud uploads.
 
 ---
 
 ## Customizing Interface Images
 
-Launch the settings UI with `--settings` and verify your owner password to customize:
+All built-in assets in `assets/` are **programmatically generated, copyright-free geometric graphics**. In `--settings`, you can customize locally (stored only in `%LOCALAPPDATA%\ScreenCoverUpgrade\settings.json`):
 
-1. **Normal Wallpaper (`NormalImage`)**: Full-screen image shown when active or on input errors (aspect-fill scaling).
-2. **Dimmed Wallpaper (`DarkImage`)**: Shown when idle.
-   - **Auto-Dim Fallback**: If you set a custom `NormalImage` and leave `DarkImage` blank, ScreenCoverLock automatically generates a dimmed version (`28%` brightness) of your custom wallpaper.
-3. **Password Input Indicators (Digits 1–5 & 6th-Character Icon)**:
-   - **Icon Folder (`DigitIconFolder`)**: Select a local folder containing `1.png`–`5.png` (or `digit-1.png`–`digit-5.png`).
-   - **Single Input Icon (`DigitImage`)**: Optional single image used for digits 1–5 when a folder or specific digit file is not provided.
-   - **6th-Character Icon (`CompleteImage`)**: Shown when 6 characters are entered (also auto-detects `6.png` or `complete.png` inside `DigitIconFolder`).
-   - *Note: Indicators only reflect input length and never reveal whether individual characters are correct.*
-4. **Optional Error Badge (`ErrorImage` + `ShowErrorImage`)**: Toggle and customize an image displayed alongside the warning banner on invalid input.
-5. **Input Dock Position (`InputPosition`)**: Choose `Bottom` (default), `Center`, or `Top` to fit your wallpaper composition.
-6. **Live Preview & One-Click Reset**: Preview any image directly inside Settings, or click **Clear** (`清除`) to revert to the built-in default assets.
-
----
-
-## Password Security & Input Rules
-
-- **First-Time Setup**: Set a 6-character owner password locally on first launch.
-- **DPAPI + HMAC Prefix Verification**:
-  - Password verifier and per-prefix `HMAC-SHA256` checks are protected using the current Windows user's **DPAPI** (`DataProtectionScope.CurrentUser`).
-  - No plaintext password or plaintext prefixes are written to disk.
-- **Anti-Brute-Force & Ergonomics**:
-  - Case-sensitive; IME and clipboard paste shortcuts are disabled.
-  - Backspace does not count as an error; modifier-only keys do not trigger errors.
-  - Incomplete attempts clear automatically after `60s` of inactivity (configurable); `Escape` clears the current attempt manually.
-  - 5 wrong submissions trigger a `30s` cooldown.
-  - Press `Enter` with the full password to unlock, or `Ctrl+Shift+Q` for emergency exit.
-
----
-
-## Optional Local Camera Recording (Disabled by Default)
-
-- **Opt-In Only**: Camera recording is disabled by default. The owner must explicitly select a camera, run a ~3-second test capture, confirm the framing, and save the setting.
-- **Triggers**: Invalid password characters, physical `Ctrl+Shift+Q` emergency exit, or optional deliberate mouse movement (off by default).
-- **Isolated Recorder Worker**:
-  - `ScreenCover.Recorder.exe` invokes `tools/ffmpeg.exe` to record video-only (no audio) H.264 `.mkv` clips locally.
-  - If a mistyped attempt is corrected via backspace and unlocked successfully within the same attempt, that single-attempt clip is automatically deleted.
-  - Built-in Event Viewer lets you inspect triggers, play clips, delete entries, or rely on automatic retention/size cleanup.
-  - **No cloud upload** or network transmission of any kind.
-
----
-
-## Optional Automation Pause Control
-
-Designed for local workflows that need temporary screen access only when explicitly authorized at startup:
-
-- Requires passing `--allow-automation` AND confirming the interactive owner prompt on launch.
-- Controlled via a local-only Named Pipe (`scripts/ScreenCover-Control.ps1`) restricted to the current Windows user SID and desktop session.
-- **Physical Input Guard (`InputGuard`)**: Low-level hooks monitor for non-injected physical keyboard/mouse input during a pause and immediately restore the full-screen cover if physical interaction occurs.
-- Press `Ctrl+Shift+L` anytime to manually restore the cover immediately.
+- **Normal Wallpaper (`NormalImage`)** & **Dimmed Wallpaper (`DarkImage`)**: Leaving `DarkImage` blank automatically generates a `28%`-brightness dimmed version of your custom `NormalImage`.
+- **Input Digit Icon Folder (`DigitIconFolder`)**: Auto-matches `1.png`–`5.png` (or `digit-1.png`–`5.png`) and `6.png` / `complete.png`.
+- **Single Input Icon (`DigitImage`)** & **6th-Character Icon (`CompleteImage`)**.
+- **Optional Error Badge (`ErrorImage` + `ShowErrorImage`)**.
+- **Input Dock Position (`InputPosition`)**: `Bottom`, `Center`, or `Top`.
+- Every row supports instant preview and one-click **Clear** (`清除`) to restore built-in defaults.
 
 ---
 
 ## Build & Run
 
-### Prerequisites
-
-- Windows 10 / 11 (x64)
-- Built-in .NET Framework 4.x C# compiler (`csc.exe`)
-- PowerShell 5.1+
-
-### Build & Test
-
 ```powershell
-# 1. Compile Strict, Casual, Recorder, and test executables
+# 1. Build Strict, Casual, Recorder, and test binaries under out/
 .\build.ps1
 
-# 2. Run headless state, image-customization, and control-lease tests
+# 2. Run headless unit tests (no cover UI or camera launched)
 .\tests\out\UpgradeTests.exe
 .\tests\out\ControlTests.exe
 
-# 3. (Optional) Download official FFmpeg essentials to tools/ffmpeg.exe for camera recording
+# 3. (Optional) Download official FFmpeg essentials to tools/ffmpeg.exe
 .\scripts\Download-FFmpeg.ps1
 
 # 4. (Optional) Build standalone user-scope Setup.exe under dist/
 .\scripts\Build-Package.ps1 -Version 1.1.0
 ```
 
-### Launch
-
-- Open Settings & Image Customization: `.\out\ScreenCover-Strict.exe --settings`
-- Run Strict Mode: `.\out\ScreenCover-Strict.exe`
-- Run Casual Mode: `.\out\ScreenCover-Casual.exe`
-- Add `--allow-automation` to enable the startup authorization prompt for local pipe control.
-
----
-
-## Repository Structure
-
-```text
-ScreenCoverLock/
-├─ assets/          # Built-in copyright-free geometric wallpapers, input icons, and .ico files
-├─ src/             # C# source files (cover windows, settings UI, multi-display, pipe control, recorder, installer)
-├─ scripts/         # Packaging, automation control, launch helpers, and FFmpeg downloader
-├─ tests/           # Headless unit tests for lock state, custom images, control leases, and named pipes
-├─ tools/           # FFmpeg upstream metadata, SHA-256 reference, and license files (no binaries)
-├─ build.ps1        # Build script using built-in .NET Framework csc.exe
-├─ LICENSE          # MIT License
-├─ README.md        # Chinese documentation
-└─ README_EN.md     # English documentation
-```
+- Settings & Image Customization: `.\out\ScreenCover-Strict.exe --settings`
+- Strict Mode: `.\out\ScreenCover-Strict.exe` (add `--allow-automation` to enable startup authorization prompt)
+- Casual Mode: `.\out\ScreenCover-Casual.exe`
 
 ---
 
 ## Security & Legal Notice
 
-- **Not a Windows Lock Screen Replacement**: ScreenCoverLock is a user-space desktop cover utility and does **not** replace `Win+L` or Windows logon security.
-- **Local Data Isolation**: User settings, DPAPI password verifiers, event logs, and recordings live under `%LOCALAPPDATA%\ScreenCoverUpgrade` with user-scoped ACLs. Never commit personal runtime directories to version control.
-- **Copyright**: All default visual assets in this repository are original geometric graphics. Ensure you hold appropriate rights for any custom images you select locally.
-- Licensed under the [MIT License](./LICENSE). Optional FFmpeg binaries remain subject to their upstream licenses (`tools/FFmpeg-LICENSE.txt`).
+- ScreenCoverLock is a desktop-layer cover utility and **does not replace Windows Lock Screen (`Win+L`)**.
+- Runtime settings, DPAPI verifiers, logs, and recordings stay strictly local under `%LOCALAPPDATA%\ScreenCoverUpgrade`.
+- Licensed under the [MIT License](./LICENSE). Optional FFmpeg binaries remain subject to `tools/FFmpeg-LICENSE.txt`.
