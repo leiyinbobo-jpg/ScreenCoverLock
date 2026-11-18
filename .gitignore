@@ -1,0 +1,23 @@
+# Build & runtime outputs
+out/
+dist/
+tests/out/
+*.exe
+*.zip
+*.pending
+*.dat
+*.mkv
+*.mp4
+*.avi
+*.tmp
+
+# Local FFmpeg binaries (download via scripts/Download-FFmpeg.ps1)
+tools/ffmpeg.exe
+tools/ffprobe.exe
+
+# User configs, runtime state & personal custom assets
+settings.json
+Events/
+Queue/
+Recordings/
+custom-assets/

@@ -1,0 +1,8 @@
+FFmpeg 9.0.2 essentials Windows x64
+Official download entry: https://ffmpeg.org/download.html
+Build provider and matching source links: https://www.gyan.dev/ffmpeg/builds/
+Downloaded archive: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+Source revision: https://github.com/FFmpeg/FFmpeg/commit/946fcce07b
+Source tarball: https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
+FFmpeg is a separate executable; see FFmpeg-LICENSE.txt and FFmpeg-README.txt.
+Archive SHA-256 verified against the provider sidecar before extraction; see FFmpeg-archive.sha256.
